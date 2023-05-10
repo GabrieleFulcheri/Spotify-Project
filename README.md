@@ -8,4 +8,4 @@ The original dataset can be found in Kaggle at this [link](https://www.kaggle.co
 The repository contains the original csv file, the R file and the R.markdown file.
 To view the project, simply click in the link below:
 
-[Spotify-Predicting songs’ popularity with linear regression](
+[Spotify-Predicting songs’ popularity with linear regression](Spotify_Project/Spotify-linear-regression.html)
