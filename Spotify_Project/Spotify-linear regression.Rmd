@@ -1,0 +1,367 @@
+---
+title: "Spotify-Predicting songs' popularity with linear regression"
+author: "Gabriele Fulcheri"
+date: '2022-10-20'
+output:
+   prettydoc::html_pretty:
+     theme: cayman
+header-includes:
+  - \usepackage{titling}
+  - \pretitle{\begin{center}
+    \includegraphics[width=2in,height=2in]{C:\Users\Gabri\Desktop\index.png}\LARGE\\}
+  - \posttitle{\end{center}}
+---
+
+## Introduction
+
+Is it possible to predict the popularity of a song? Which are the features of it that may have the biggest impact on its popularity?
+
+Analyzing the Kaggle's dataset [Top Hits Spotify from 2000-2019](https://www.kaggle.com/datasets/paradisejoy/top-hits-spotify-from-20002019), the aim of this project is to build a linear model which could give us a prediction of a song's popularity, based on th features contained in the dataset.
+
+The dataset itself cointains data about the top 2000 songs on Spotify from 2000 to 2019. Its is organized in 18 columns, each describing the song and its features. The latter could be distinguished in two groups:
+
+   * **general features**: songs'name, genre, artists, year of publication and duration
+   
+   * **specific features** : quantitative data regarding specific aspects of a song
+   
+In the latter group, the following features are contained: 
+
+* **popularity**: The higher the value the more popular the song is.
+* **danceability**: Danceability describes how suitable a track is for dancing based on a combination of musical elements including tempo, rhythm stability, beat strength, and overall regularity. A value of 0.0 is least danceable and 1.0 is most danceable.
+* **energy**: Energy is a measure from 0.0 to 1.0 and represents a perceptual measure of intensity and activity.
+* **key**: The key the track is in. Integers map to pitches using standard Pitch Class notation. E.g. 0 = C, 1 = C♯/D♭, 2 = D, and so on. If no key was detected, the value is -1.
+* **loudness**: The overall loudness of a track in decibels (dB). Loudness values are averaged across the entire track and are useful for comparing relative loudness of tracks. Loudness is the quality of a sound that is the primary psychological correlate of physical strength (amplitude). Values typically range between -60 and 0 db.
+* **mode**: Mode indicates the modality (major or minor) of a track, the type of scale from which its melodic content is derived. Major is represented by 1 and minor is 0.
+* **speechiness**: Speechiness detects the presence of spoken words in a track. The more exclusively speech-like the recording (e.g. talk show, audio book, poetry), the closer to 1.0 the attribute value. Values above 0.66 describe tracks that are probably made entirely of spoken words. Values between 0.33 and 0.66 describe tracks that may contain both music and speech, either in sections or layered, including such cases as rap music. Values below 0.33 most likely represent music and other non-speech-like tracks.
+* **acousticness**: A confidence measure from 0.0 to 1.0 of whether the track is acoustic. 1.0 represents high confidence the track is acoustic.
+* **instrumentalness**: Predicts whether a track contains no vocals. "Ooh" and "aah" sounds are treated as instrumental in this context. Rap or spoken word tracks are clearly "vocal". The closer the instrumentalness value is to 1.0, the greater likelihood the track contains no vocal content. Values above 0.5 are intended to represent instrumental tracks, but confidence is higher as the value approaches 1.0.
+* **liveness**: Detects the presence of an audience in the recording. Higher liveness values represent an increased probability that the track was performed live. A value above 0.8 provides strong likelihood that the track is live.
+* **valence**: A measure from 0.0 to 1.0 describing the musical positiveness conveyed by a track. Tracks with high valence sound more positive (e.g. happy, cheerful, euphoric), while tracks with low valence sound more negative (e.g. sad, depressed, angry).
+* **tempo**: The overall estimated tempo of a track in beats per minute (BPM). In musical terminology, tempo is the speed or pace of a given piece and derives directly from the average beat duration.
+
+While the generic features are useful to organize data in different categories, the specific features are the ones that are actually used for building a linear regression model.
+
+# Libraries used 
+
+```{r warning=FALSE, message=FALSE}
+library(tidyverse)
+library(readr)
+library(car)
+library(gpairs)
+library(corrplot)
+library(coefplot)
+library(lmtest)
+library(kableExtra)
+```
+
+## 1. Data Import and Cleaning
+
+```{r message=FALSE}
+songs_normalize <- read_csv("//PC-GABRI/Users/Gabri/Desktop/songs_normalize.csv")
+summary(songs_normalize)
+```
+
+From the summary obtained, we can notice that some songs have popularity = 0, which doesn't seem to be a correct value since all the songs considered are popular ones. Thus, it is better to remove these values:
+
+```{r}
+songs_normalize %>% select(1:18) %>% filter(popularity == 0) %>% arrange(year)
+```
+
+Let's run a quick check for duplicates 
+
+```{r}
+songs_normalize %>% duplicated()%>% sum()
+```
+
+Having 59 duplicates, we need to select distinct values
+
+```{r}
+sg <- distinct(songs_normalize)
+sg %>% duplicated() %>% sum()
+```
+
+Let's now check the consistency of the genre's values:
+
+```{r}
+sg %>% distinct(genre) %>% as.data.frame() %>% kable()
+```
+
+As we can see, there is a genre called set(), which is an incorrect input we need to get rid of. Once we'll have cleaned our dataset, eliminating set() genre and popularity = 0 values, we'll be ready for analysis
+
+```{r}
+sg %>% select(1:18)%>% filter(genre == 'set()') %>% print()  ##set() has just 22 entries
+
+sg_cleaned <- sg %>% select(1:18) %>% filter(genre!= 'set()' & popularity != 0)
+```
+
+## 2 Data analysis: 
+
+# 2.1 First exploration of correlations
+
+```{r message=FALSE, warning=FALSE, results='hide'}
+s1 <- sg_cleaned %>% select(3, 6:17) ## to select only values for regression
+unlist(s1)
+```
+
+Now it is important to explore the distribution and the correlations of the variables considered, in order to: (i) firstly, control if all the variables have a normal distributions that doesn't violate the assumptions of a linear model; (ii) secondly, control the independency of the variables in order to do not include in the model two variables with a moderate to strong correlation, which would violate the assumption of independency of the explanatory variables.
+
+```{r warning=FALSE, message=FALSE}
+
+scatterplotMatrix(formula = ~ popularity + danceability + energy + loudness + speechiness + valence+tempo, transform=TRUE, by.group= TRUE, data = s1)
+corrplot.mixed(cor(s1), upper= "ellipse", tl.pos = "lt", order="AOE")
+
+```
+
+As it is possible to notice, only the variable "variance" seems to follow a normal distribution, while all the other ones (especially speechiness) follow a skewed one.
+Regarding the correlations, there aren't strong correlations with popularity, while "energy-loudness", "danceability-valence" and loudness-valence" seem to have a strong correlation. Hence, we will need to be caeful of including these pairs of variables in a model, since we would violate the assumption of independency.
+
+The first step is to transform the distribution of the variables in order to obtain a normal one. To achieve this result, we will use the **Box-Cox Transformation**:
+
+```{r echo=FALSE, include=FALSE}
+getwd()
+```
+
+```{r echo=FALSE}
+knitr::include_graphics("Box-Cox.PNG", error=FALSE)
+```
+
+where *lambda* can take any value and *log* is the natural logarithm. However, this Box-Cox transformation can be applied only to positive values, while for negative ones we just need to introduce a *lambda2* variable that shifts the variable's values to a positive domain: 
+
+```{r echo=FALSE}
+knitr::include_graphics("Box-Cox2.PNG", error=FALSE)
+```
+
+While we could try different values of *lambda*, R has a function called "powerTransform()" that can estimate the best value for our constant. If the variable is already normally distributed, powerTransform() will return a value near to 1.
+Let's apply the function to our variables in order to obtain a normal distribution:
+
+```{r}
+powerTransform(s1$popularity)
+powerTransform(s1$speechiness)
+powerTransform(s1$energy)
+powerTransform(s1$danceability)
+powerTransform(s1$tempo)
+powerTransform(s1$valence)  ## valence is already normally distributed, therefore we obtain                                  0.987, which is near 1
+```
+
+Once we have estimated the *lambda* values, we change all variables' values with the "bcPower" function, which is a function that transform a column's value with the Box-Cox transformation, given a certain value of the constant (which we have obtained with the code above)
+
+```{r message=FALSE, results='hide'}
+lambda_popularity <- coef(powerTransform(s1$popularity))
+bcPower(s1$popularity, lambda_popularity)
+
+lambda_speechiness <- coef(powerTransform(s1$speechiness))
+bcPower(s1$speechiness, lambda_speechiness)
+
+lambda_energy <- coef(powerTransform(s1$energy))
+bcPower(s1$energy, lambda_energy)
+
+lambda_danceability <- coef(powerTransform(s1$danceability))
+bcPower(s1$danceability, lambda_danceability)
+
+lambda_tempo <- coef(powerTransform(s1$tempo))
+bcPower(s1$tempo, lambda_tempo)
+```
+
+Since the variable loudness has negative values, we need to use the second version of the Box-Cox transformation: 
+
+```{r message=FALSE}
+summary(s1$loudness)  #since loudness has a min value of -20.5, we just need to add 21
+S1 <- s1 %>% mutate(loudness_2.0 = loudness + 21)
+
+```
+
+```{r message=FALSE, results='hide'}
+lambda_loudness <- coef(powerTransform(S1$loudness_2.0))
+bcPower(S1$loudness_2.0, lambda_loudness)
+```
+
+Now, we can create a table where the transformed values are added, in order to check if we respect the normality assumption of the linear model:
+
+```{r}
+s2 <- s1 %>% mutate(popularity_trfm = bcPower(s1$popularity,lambda_popularity), 
+                    speechiness_trfm = bcPower(s1$speechiness, lambda_speechiness),
+                    danceability_trfm = bcPower(s1$danceability, lambda_danceability),
+                    energy_trfm = bcPower(s1$energy, lambda_energy),
+                    tempo_trfm = bcPower(s1$tempo, lambda_tempo),
+                    loudness_trfm = bcPower(S1$loudness_2.0, lambda_loudness)) %>% select(1, 5, 7, 9, 10,12, 14:19)
+
+kable(s2, caption = " Table 1: Transformed values for normal distribution")%>%
+   kableExtra::scroll_box(width = "780px", height = "600px")
+```
+
+Let's now check the normal distribution and the correlations among variables, running again the "scatterplotMatrix()" and "corrplot.mixed()" functions 
+
+```{r warning=FALSE}
+scatterplotMatrix(formula = ~ popularity_trfm + danceability_trfm + energy_trfm + loudness_trfm + speechiness_trfm + valence+ tempo_trfm, transform=TRUE, by.group= TRUE, data = s2)
+
+corrplot.mixed(cor(s2), upper= "ellipse", tl.pos = "lt", order="AOE")
+
+```
+
+As we can see, we have now obtained a normal distribution of all the variables considered, therefore we can now begin to build our linear model to predict songs' popularity
+
+# 2.2 Multi-linear regression
+
+Firstly, let's try to build a lm model with all the variables elaborated before that could be of any help in predicting the popularity of a song.
+
+```{r}
+m1 <- lm(popularity_trfm ~ energy_trfm+loudness_trfm+valence+danceability_trfm+speechiness_trfm, data=s2)
+summary(m1)
+plot(m1)
+```
+
+Regarding the assumption for the linear model, the plot() function shows us that:
+
+  * Residuals are equally distributed and thus do not follow any pattern (first plot and third plot)
+  * Residuals are normally distributed among quantiles (second plot)
+  * There are not outliers that play a determinant role in the regression coefficients (since none of them is beyond the Cook's distance line)
+
+Since our model respects the assumptions of linear model so far, we can explore the coefficients obtained.
+It is possible to notice that our R-squared value is low: our model can explain around 1,4% of the total variability of the dependent variable popularity. Even if in explaining variables that belongs to social domains we can't obtain values such as those of the physical fields, 1,4% is too low to be relevant. 
+Regarding the independent variables, *danceability* and *speechiness* are not statistically significant, since their p-value is higher than 0.05.
+
+Let's try to exclude those variables and check for the changes in our model.
+
+```{r}
+m1.2 <- lm(popularity_trfm ~ energy_trfm+loudness_trfm+valence, data=s2)
+summary(m1.2)
+plot(m1.2)
+```
+
+Now all the variables considered are statistically significant. However, the model is a bit weaker than the one above.
+It seems that nothing really relevant can be obtained from such a model. This final results had to be expected since it is implausible to predict the popularity of all songs in general, without dividing them into genres. In fact, loudness could make a rock song popular, but maybe it could have the opposite effect on a pop one. 
+
+
+## 3 Exploration of genres
+
+# 3.1 Preliminary classification
+
+Let's use the table() function to see each unique genre and how many songs it has
+
+```{r}
+table(sg_cleaned$genre)
+```
+
+Since the column 'genre' has all the possible 'classification genre' of a song, let's assume that the first mentioned is the most relevant one, namely that a '*hip-hop, pop, latin*' song is first of all an hip-hop song, with certain elements of the remaining two.
+
+Let's split the column genre into first, second and third genre to have a clearer vision:
+
+```{r warning=FALSE}
+w <- s2 %>% mutate(genre = sg_cleaned$genre) %>% 
+            separate(genre, c("main genre", "secondary genre", "tertiary genre"), ",")
+
+## let's also have a glance at the results obtained
+
+table(w$`main genre`)
+
+ggplot(data=w)+ aes(w$`main genre`)+
+  geom_bar(mapping=aes(fill=w$`main genre`))+
+  theme_classic()+
+  labs(x="Main Genres", y="Number of top-position songs", title="Genres' popularity breakdown")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+As we can see, the vast majority of popular songs are either hip-hop or pop ones. Rock seems to be quite popular but below the 200 entries.
+This means that we have enough entries for a significant model only for these 3 genres. Thus, we need to exclude the others from our analysis.
+
+# 3.2 Predicting pop an hip-hop songs
+
+Let's now try to build a model for the two most popular genres. 
+Firstly, we consider pop:
+
+```{r}
+genre_1 <- w %>% filter(`main genre` == "pop")%>% as.data.frame()
+
+M2 <- lm(popularity_trfm ~  energy_trfm+ valence +tempo_trfm+ instrumentalness+ speechiness_trfm, data=genre_1)
+summary(M2)
+```
+
+As we can see, only teh energy variable has an acceptabe p-value, while all other variables haven't. Moreover, even ignoring the p-value issue, we are left with a weak model (R squared = 1%)
+
+Let's now try with hip-hop:
+
+```{r}
+genre_2 <- w %>% filter(`main genre` == "hip hop")%>% as.data.frame()
+
+M3 <- lm(popularity_trfm ~ energy_trfm +tempo_trfm+ instrumentalness+ speechiness_trfm, data=genre_2)
+summary(M3)
+```
+
+Since here we have the same problem as before, let's try to exclude all variables except tempo:
+
+```{r}
+M3.1 <- lm(popularity_trfm ~ tempo_trfm, data=genre_2)
+summary(M3.1)
+```
+
+Tempo seems to have a weak correlation with popularity and the model itself is not strong since it has a very low R-squared value.
+
+
+# 3.3 Predicting rock songs
+
+For our last attempt, let's try to find correlations in rock songs:
+
+```{r}
+genre_3 <- w %>% filter(`main genre` == "rock")%>% as.data.frame()
+
+M6 <- lm(popularity_trfm ~ energy_trfm +instrumentalness + loudness_trfm+tempo_trfm+speechiness_trfm, data=genre_3)
+summary(M6) 
+```
+
+We need to exclude all variables with an unacceptable p-value (we keep speechiness_trfm because it has a p-value near 0,5):
+
+```{r}
+M6.1 <- lm(popularity_trfm ~ instrumentalness+speechiness_trfm, data=genre_3)
+summary(M6.1)
+plot(M6.1)
+```
+
+The model seems to be the best one so far, but we need to eliminate outliers:
+
+```{r}
+genre_3.cleaned <- genre_3[-c(41, 43),]
+M6.1_cleaned <- lm(popularity_trfm ~ instrumentalness+speechiness_trfm, data=genre_3.cleaned)
+summary(M6.1_cleaned)
+plot(M6.1_cleaned)  ##seems we have to exclude another observation
+
+genre_3.cleaned.v2 <- genre_3[-c(41, 43, 99),]
+M6.1_cleaned.v2 <- lm(popularity_trfm ~ instrumentalness+speechiness_trfm, data=genre_3.cleaned.v2)
+summary(M6.1_cleaned.v2)
+plot(M6.1_cleaned.v2)
+```
+
+M6.1_cleaned.v2 is the best model obtained. All variables are statistically significant and our R-squared values is above 10%, which makes the model of some use. Ultimately, it seems that the model respects the assumption of normal distribution of residuals and costant variance
+Let's dive more specifically on the correlation values of the two variables:
+
+```{r}
+cor(genre_3.cleaned.v2$popularity_trfm, genre_3.cleaned.v2$instrumentalness, method = 'pearson')
+cor(genre_3.cleaned.v2$popularity_trfm, genre_3.cleaned.v2$speechiness_trfm, method = 'pearson')
+corrplot.mixed(cor(genre_3.cleaned.v2[1:12]), upper= "ellipse", tl.pos = "lt", order="AOE")
+```
+
+Both variables have a weak negative correlation with popularity of rock songs. However, our correlation map is, in general, more explicative than the initial one.
+The last thing we need to check is if our model actually respect the two main assumptions of linear regression: homoscedasticity and normal distribution 
+
+```{r}
+bptest(M6.1_cleaned.v2)  ## there is homoscedasticity/constant variance
+shapiro.test(genre_3.cleaned.v2$instrumentalness)
+shapiro.test(genre_3.cleaned.v2$speechiness_trfm) #the hypothesis of normal distribution if the independent variables is violated
+```
+
+Unfortunately, both variables haven't passed the Shapiro-Wilk test for normal distribution, even if speechiness_trfm was close to it. 
+
+
+## Conclusions 
+
+Our analysis started with all songs in general and then we have soon realized that a partition by genre was necessary, since every variable is expected to play a different role in different genres. However, since the vast majority of popular songs were either pop songs or hip-hop ones, we had to restrict our analysis to genres with enough entries, namely hip-hop, pop and rock. 
+Regarding the first two, no significant model was found, since most of the variables considered had an unacceptable p-value.
+The only model acceptable was the last one, for which both *instrumentalness* and *speechiness* have a weak negative correlation with the popularity of rock songs. However, the model itself has not passed the Shapiro-Wilk test, therefore is not strictly speaking reliable
+
+In conclusion, no significant correlation or valid model were found.
+
+ 
+ 
+ 
+ 
+
